@@ -4,6 +4,8 @@ import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from groq import Groq
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 
 # --- Config ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -135,3 +137,10 @@ async def process_voice(req: VoiceRequest):
         session_id=req.session_id,
         pb_record_id=pb_record_id,
     )
+
+@app.get("/audio/{session_id}")
+async def get_audio(session_id: str):
+    file_path = f"audio_{session_id}.mp3"
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type="audio/mpeg")
+    raise HTTPException(status_code=404, detail="Audio file not found or not yet forged")
