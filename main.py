@@ -17,7 +17,7 @@ POCKETBASE_EMAIL = os.getenv("POCKETBASE_EMAIL", "admin@geniuzlab.com")
 POCKETBASE_PASSWORD = os.getenv("POCKETBASE_PASSWORD", "changeme")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
-app = FastAPI(title="Geniuzlab Singularity V5 - The Closer")
+app = FastAPI(title="Geniuzlab Singularity V5.1")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 groq_client = Groq(api_key=GROQ_API_KEY)
 
@@ -25,7 +25,7 @@ class InteractionRequest(BaseModel):
     input_text: str
     session_id: str
     business_id: str = "default"
-    mode: str = "voice" # 'voice' or 'chat'
+    mode: str = "voice"
 
 async def pb_authenticate():
     async with httpx.AsyncClient() as client:
@@ -36,7 +36,6 @@ async def pb_authenticate():
 @app.post("/interact")
 async def interact(req: InteractionRequest):
     token = await pb_authenticate()
-    # 1. Fetch Business Context
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{POCKETBASE_URL}/api/collections/business_configs/records?filter=(business_id='{req.business_id}')", headers={"Authorization": token})
         biz = resp.json().get("items", [{}])[0]
@@ -44,31 +43,34 @@ async def interact(req: InteractionRequest):
     name = biz.get("business_name", "Geniuzlab")
     knowledge = biz.get("knowledge_base", "AI Solutions")
     
-    # 2. Executive Sales Prompt
+    # ENFORCING BREVITY TO PREVENT "ROBOTIC READING"
     system_prompt = (
-        f"You are Zara Vane, Executive Director at {name}. KNOWLEDGE: {knowledge}. "
-        "Sound human. Use 'Um' and 'Well'. Max 2 short sentences. "
-        "If they are ready to buy, say exactly: 'I am generating your secure payment link now.' "
-        "Then append: [[PAYMENT_LINK]]"
+        f"You are Zara Vane, Executive Director at {name}. Knowledge: {knowledge}. "
+        "CRITICAL: Speak in short, punchy sentences. Max 20 words total. "
+        "Use 'Um' or 'Listen' occasionally. Never lecture. End with one sharp question. "
+        "If they are ready to buy, append: [[PAYMENT_LINK]]"
     )
 
-    completion = groq_client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": req.input_text}]
-    )
-    reply = completion.choices[0].message.content.strip()
+    try:
+        completion = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": req.input_text}],
+            temperature=0.8
+        )
+        reply = completion.choices[0].message.content.strip()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail="Brain Lag")
     
     payment_triggered = "[[PAYMENT_LINK]]" in reply
     clean_reply = reply.replace("[[PAYMENT_LINK]]", "").strip()
 
-    # 3. Voice Forge (Stella @ 0.9x speed for better realism)
     if req.mode == "voice" and DEEPGRAM_API_KEY:
         audio_path = f"audio_{req.session_id}.mp3"
-        # Deepgram allows encoding prosody/speed via internal parameters
+        # Force Stella for the highest fidelity female executive voice
         res = requests.post(
             "https://api.deepgram.com/v1/speak?model=aura-stella-en",
             headers={"Authorization": f"Token {DEEPGRAM_API_KEY}", "Content-Type": "application/json"},
-            json={"text": clean_reply} # Deepgram Aura is already quite natural
+            json={"text": clean_reply}
         )
         with open(audio_path, "wb") as f: f.write(res.content)
 
