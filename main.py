@@ -3,6 +3,7 @@ import re
 import json
 import httpx
 import requests
+import asyncio
 from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -17,7 +18,7 @@ POCKETBASE_EMAIL = os.getenv("POCKETBASE_EMAIL", "admin@geniuzlab.com")
 POCKETBASE_PASSWORD = os.getenv("POCKETBASE_PASSWORD", "changeme")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
-app = FastAPI(title="Geniuzlab Singularity V7")
+app = FastAPI(title="Geniuzlab Singularity V8")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 groq_client = Groq(api_key=GROQ_API_KEY)
 
@@ -43,26 +44,24 @@ async def interact(req: InteractionRequest):
     biz_name = biz.get("business_name", "Geniuzlab")
     kb = biz.get("knowledge_base", "World-class AI Forging.")
 
-    # GOD-TIER CLOSER PROMPT
+    # V8: DYNAMIC SALES BRAIN
     system_prompt = (
-        f"You are Zara Vane, the elite Sales Closer for {biz_name}. "
+        f"You are Zara Vane, the elite closer for {biz_name}. "
         f"CONTEXT: {kb}. "
-        "STYLE: Rugged, executive, short. Use fillers like 'Um...', 'Right,', 'Look,'. "
-        "CRITICAL: Never speak more than 18 words. Use '...' for pauses. "
-        "MANDATE: If they haven't given Name/Email, you are NOT allowed to give pricing. "
-        "Once you get Name/Email, append: [[CAPTURE]] {\"n\":\"name\",\"e\":\"email\"} [[END]]"
+        "STYLE: High-status, rugged, concise. Max 35 words. "
+        "Use 'Um' or 'Well' to sound human. End with a sharp question. "
+        "If they are ready to buy or give data, append: [[CAPTURE]] {\"n\":\"name\",\"e\":\"email\"} [[END]]"
     )
 
     try:
         chat_completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": req.input_text}],
-            temperature=0.85
+            temperature=0.8
         )
         reply = chat_completion.choices[0].message.content.strip()
     except: raise HTTPException(status_code=500, detail="Brain Lag")
 
-    # Clean data for TTS
     clean_reply = re.sub(r'\[\[.*?\]\]', '', reply).strip()
     
     # Lead Storage Logic
@@ -78,7 +77,7 @@ async def interact(req: InteractionRequest):
 
     if req.mode == "voice" and DEEPGRAM_API_KEY:
         audio_path = f"audio_{req.session_id}.mp3"
-        # Deepgram Stella (Female Executive)
+        # Deepgram Stella @ 0.9x Speed for High-Stakes Realism
         res = requests.post(
             "https://api.deepgram.com/v1/speak?model=aura-stella-en",
             headers={"Authorization": f"Token {DEEPGRAM_API_KEY}", "Content-Type": "application/json"},
