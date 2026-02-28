@@ -77,7 +77,7 @@ async def process_voice(req: VoiceRequest):
     # 1. Get Llama 3 response via Groq
     try:
         completion = groq_client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": req.transcript},
