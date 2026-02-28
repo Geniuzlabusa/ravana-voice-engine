@@ -17,14 +17,20 @@ POCKETBASE_EMAIL = os.getenv("POCKETBASE_EMAIL", "admin@geniuzlab.com")
 POCKETBASE_PASSWORD = os.getenv("POCKETBASE_PASSWORD", "changeme")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
-app = FastAPI(title="Geniuzlab Singularity V4")
+app = FastAPI(title="Geniuzlab Singularity V4 - Stabilized")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 class VoiceRequest(BaseModel):
     transcript: str
     session_id: str
-    business_id: str = "default" # The pSEO page will send this
+    business_id: str = "default"
+
+async def pb_authenticate():
+    async with httpx.AsyncClient() as client:
+        r = await client.post(f"{POCKETBASE_URL}/api/collections/_superusers/auth-with-password",
+                             json={"identity": POCKETBASE_EMAIL, "password": POCKETBASE_PASSWORD})
+        return r.json().get("token")
 
 async def get_business_context(token: str, biz_id: str):
     async with httpx.AsyncClient() as client:
@@ -33,52 +39,43 @@ async def get_business_context(token: str, biz_id: str):
             headers={"Authorization": token}
         )
         data = resp.json().get("items", [])
-        return data[0] if data else None
+        return data[0] if data else {} # Return empty dict instead of None to prevent crashes
 
 @app.post("/process-voice")
 async def process_voice(req: VoiceRequest):
-    # 1. AUTH & RETRIEVE KNOWLEDGE
     token = await pb_authenticate()
     biz = await get_business_context(token, req.business_id)
     
-    knowledge = biz.get("knowledge_base", "General Geniuzlab Executive") if biz else "AI Sales Specialist"
-    location = biz.get("target_location", "Global") if biz else "Matara Command"
+    # SAFE DEFAULTS
+    name = biz.get("business_name", "Geniuzlab")
+    knowledge = biz.get("knowledge_base", "AI Sales Executive")
+    location = biz.get("target_location", "Matara Command")
 
-    # 2. THE HUMAN SALES PROMPT
     system_prompt = (
-        f"You are Zara Vane. You represent {biz.get('business_name', 'Geniuzlab')} in {location}. "
+        f"You are Zara Vane. You represent {name} in {location}. "
         f"KNOWLEDGE: {knowledge}. "
-        "DIRECTIVE: Sound human. Use 'Um', 'Well', and '...'. "
-        "STRICT LIMIT: Maximum 25 words. Ask ONE sharp question to close the deal. "
-        "If they give contact info, append: [[JSON_START]] {\"name\": \"name\"} [[JSON_END]]"
+        "Sound human using 'Um' or 'Well'. Max 2 short sentences. End with a question."
     )
 
-    # 3. BRAIN
-    completion = groq_client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": req.transcript}],
-        temperature=0.9
-    )
-    raw_reply = completion.choices[0].message.content.strip()
-    spoken_reply = re.sub(r'\[\[.*?\]\]', '', raw_reply).strip()
+    try:
+        completion = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": req.transcript}]
+        )
+        reply = completion.choices[0].message.content.strip()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
-    # 4. VOICE (Stella - Human Cadence)
     if DEEPGRAM_API_KEY:
         audio_path = f"audio_{req.session_id}.mp3"
         res = requests.post(
             "https://api.deepgram.com/v1/speak?model=aura-stella-en",
             headers={"Authorization": f"Token {DEEPGRAM_API_KEY}", "Content-Type": "application/json"},
-            json={"text": spoken_reply}
+            json={"text": reply}
         )
         with open(audio_path, "wb") as f: f.write(res.content)
 
-    return {"reply": spoken_reply}
-
-async def pb_authenticate():
-    async with httpx.AsyncClient() as client:
-        r = await client.post(f"{POCKETBASE_URL}/api/collections/_superusers/auth-with-password",
-                             json={"identity": POCKETBASE_EMAIL, "password": POCKETBASE_PASSWORD})
-        return r.json().get("token")
+    return {"reply": reply}
 
 @app.get("/audio/{session_id}")
 async def get_audio(session_id: str):
