@@ -1,5 +1,6 @@
 import os
 import httpx
+import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from groq import Groq
@@ -9,6 +10,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 POCKETBASE_URL = os.getenv("POCKETBASE_URL", "http://18.207.204.66:8090")
 POCKETBASE_EMAIL = os.getenv("POCKETBASE_EMAIL", "admin@geniuzlab.com")
 POCKETBASE_PASSWORD = os.getenv("POCKETBASE_PASSWORD", "changeme")
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
 app = FastAPI(title="Geniuzlab Voice AI Router", version="1.0.0")
 groq_client = Groq(api_key=GROQ_API_KEY)
@@ -89,7 +91,33 @@ async def process_voice(req: VoiceRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Groq error: {str(e)}")
 
-    # 2. Log interaction to PocketBase (best-effort)
+    # --- 2. DEEPGRAM TTS FORGE ---
+    if DEEPGRAM_API_KEY:
+        audio_filename = f"audio_{req.session_id or 'default'}.mp3"
+        deepgram_url = "https://api.deepgram.com/v1/speak?model=aura-orion-en"
+        
+        headers = {
+            "Authorization": f"Token {DEEPGRAM_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        tts_payload = {"text": reply}
+        
+        print("[INFO] Forging Boyka audio payload...")
+        try:
+            tts_response = requests.post(deepgram_url, headers=headers, json=tts_payload)
+            if tts_response.status_code == 200:
+                with open(audio_filename, "wb") as f:
+                    f.write(tts_response.content)
+                print(f"[SUCCESS] Cinematic audio forged: {audio_filename}")
+            else:
+                print(f"[WARN] Deepgram API failed: {tts_response.text}")
+        except Exception as e:
+            print(f"[WARN] Deepgram Request Error: {str(e)}")
+    else:
+        print("[WARN] DEEPGRAM_API_KEY not found. Skipping audio forge.")
+    # -----------------------------
+
+    # 3. Log interaction to PocketBase (best-effort)
     pb_record_id = None
     try:
         token = await pb_authenticate()
