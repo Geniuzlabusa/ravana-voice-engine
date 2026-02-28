@@ -17,76 +17,69 @@ POCKETBASE_EMAIL = os.getenv("POCKETBASE_EMAIL", "admin@geniuzlab.com")
 POCKETBASE_PASSWORD = os.getenv("POCKETBASE_PASSWORD", "changeme")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
-app = FastAPI(title="Geniuzlab Singularity V3", version="3.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+app = FastAPI(title="Geniuzlab Singularity V4")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 class VoiceRequest(BaseModel):
     transcript: str
-    session_id: str = "default"
-    user_id: Optional[str] = None
-
-class VoiceResponse(BaseModel):
-    reply: str
     session_id: str
-    pb_record_id: Optional[str] = None
-    lead_captured: bool = False
+    business_id: str = "default" # The pSEO page will send this
 
-@app.post("/process-voice", response_model=VoiceResponse)
+async def get_business_context(token: str, biz_id: str):
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{POCKETBASE_URL}/api/collections/business_configs/records?filter=(business_id='{biz_id}')",
+            headers={"Authorization": token}
+        )
+        data = resp.json().get("items", [])
+        return data[0] if data else None
+
+@app.post("/process-voice")
 async def process_voice(req: VoiceRequest):
-    # HUMAN-CENTRIC SALES PROMPT
+    # 1. AUTH & RETRIEVE KNOWLEDGE
+    token = await pb_authenticate()
+    biz = await get_business_context(token, req.business_id)
+    
+    knowledge = biz.get("knowledge_base", "General Geniuzlab Executive") if biz else "AI Sales Specialist"
+    location = biz.get("target_location", "Global") if biz else "Matara Command"
+
+    # 2. THE HUMAN SALES PROMPT
     system_prompt = (
-        "You are Zara Vane, the elite Executive AI Director at Geniuzlab LLC. "
-        "CRITICAL: Do not sound like an AI. Use conversational fillers like 'Um...', 'Right,', and 'Well...'. "
-        "Use ellipses (...) to create natural pauses for breath. "
-        "If you get their Name and Email, append: "
-        "[[JSON_START]] {\"name\": \"name\", \"email\": \"email\"} [[JSON_END]]"
+        f"You are Zara Vane. You represent {biz.get('business_name', 'Geniuzlab')} in {location}. "
+        f"KNOWLEDGE: {knowledge}. "
+        "DIRECTIVE: Sound human. Use 'Um', 'Well', and '...'. "
+        "STRICT LIMIT: Maximum 25 words. Ask ONE sharp question to close the deal. "
+        "If they give contact info, append: [[JSON_START]] {\"name\": \"name\"} [[JSON_END]]"
     )
 
-    try:
-        completion = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": req.transcript}],
-            temperature=0.8, # Slightly higher for more 'human' randomness
-        )
-        raw_reply = completion.choices[0].message.content.strip()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Groq error: {str(e)}")
+    # 3. BRAIN
+    completion = groq_client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": req.transcript}],
+        temperature=0.9
+    )
+    raw_reply = completion.choices[0].message.content.strip()
+    spoken_reply = re.sub(r'\[\[.*?\]\]', '', raw_reply).strip()
 
-    spoken_reply = raw_reply
-    lead_captured = False
-    match = re.search(r'\[\[JSON_START\]\](.*?)\[\[JSON_END\]\]', raw_reply, re.DOTALL)
-    if match:
-        spoken_reply = raw_reply.replace(match.group(0), "").strip()
-        lead_captured = True
-
+    # 4. VOICE (Stella - Human Cadence)
     if DEEPGRAM_API_KEY:
-        # SWITCHED TO STELLA (FEMALE EXECUTIVE)
-        audio_filename = f"audio_{req.session_id}.mp3"
-        try:
-            requests.post(
-                "https://api.deepgram.com/v1/speak?model=aura-stella-en", 
-                headers={"Authorization": f"Token {DEEPGRAM_API_KEY}", "Content-Type": "application/json"},
-                json={"text": spoken_reply}
-            ).content
-            with open(audio_filename, "wb") as f:
-                f.write(requests.post(
-                    "https://api.deepgram.com/v1/speak?model=aura-stella-en", 
-                    headers={"Authorization": f"Token {DEEPGRAM_API_KEY}", "Content-Type": "application/json"},
-                    json={"text": spoken_reply}
-                ).content)
-        except: pass
+        audio_path = f"audio_{req.session_id}.mp3"
+        res = requests.post(
+            "https://api.deepgram.com/v1/speak?model=aura-stella-en",
+            headers={"Authorization": f"Token {DEEPGRAM_API_KEY}", "Content-Type": "application/json"},
+            json={"text": spoken_reply}
+        )
+        with open(audio_path, "wb") as f: f.write(res.content)
 
-    return VoiceResponse(reply=spoken_reply, session_id=req.session_id, lead_captured=lead_captured)
+    return {"reply": spoken_reply}
+
+async def pb_authenticate():
+    async with httpx.AsyncClient() as client:
+        r = await client.post(f"{POCKETBASE_URL}/api/collections/_superusers/auth-with-password",
+                             json={"identity": POCKETBASE_EMAIL, "password": POCKETBASE_PASSWORD})
+        return r.json().get("token")
 
 @app.get("/audio/{session_id}")
 async def get_audio(session_id: str):
-    return FileResponse(f"audio_{session_id}.mp3", media_type="audio/mpeg")
+    return FileResponse(f"audio_{session_id}.mp3")
