@@ -3,7 +3,7 @@ import re
 import json
 import httpx
 import requests
-import asyncio
+import urllib.parse
 from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -18,7 +18,7 @@ POCKETBASE_EMAIL = os.getenv("POCKETBASE_EMAIL", "admin@geniuzlab.com")
 POCKETBASE_PASSWORD = os.getenv("POCKETBASE_PASSWORD", "changeme")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
-app = FastAPI(title="Geniuzlab Singularity V8")
+app = FastAPI(title="Geniuzlab Singularity V14")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 groq_client = Groq(api_key=GROQ_API_KEY)
 
@@ -27,6 +27,15 @@ class InteractionRequest(BaseModel):
     session_id: str
     business_id: str = "default"
     mode: str = "voice"
+
+class ProposalRequest(BaseModel):
+    name: str
+    email: str
+    company: str
+    missed_calls: int
+    avg_value: int
+    business_id: str
+    session_id: str
 
 async def pb_auth():
     async with httpx.AsyncClient() as client:
@@ -44,13 +53,11 @@ async def interact(req: InteractionRequest):
     biz_name = biz.get("business_name", "Geniuzlab")
     kb = biz.get("knowledge_base", "World-class AI Forging.")
 
-    # V8: DYNAMIC SALES BRAIN
     system_prompt = (
         f"You are Zara Vane, the elite closer for {biz_name}. "
         f"CONTEXT: {kb}. "
         "STYLE: High-status, rugged, concise. Max 35 words. "
-        "Use 'Um' or 'Well' to sound human. End with a sharp question. "
-        "If they are ready to buy or give data, append: [[CAPTURE]] {\"n\":\"name\",\"e\":\"email\"} [[END]]"
+        "Use 'Um' or 'Well' to sound human. End with a sharp question."
     )
 
     try:
@@ -63,21 +70,9 @@ async def interact(req: InteractionRequest):
     except: raise HTTPException(status_code=500, detail="Brain Lag")
 
     clean_reply = re.sub(r'\[\[.*?\]\]', '', reply).strip()
-    
-    # Lead Storage Logic
-    capture = re.search(r'\[\[CAPTURE\]\] (.*?) \[\[END\]\]', reply)
-    if capture:
-        try:
-            data = json.loads(capture.group(1))
-            async with httpx.AsyncClient() as client:
-                await client.post(f"{POCKETBASE_URL}/api/collections/leads/records", 
-                                  json={"name": data['n'], "email": data['e'], "session_id": req.session_id},
-                                  headers={"Authorization": token})
-        except: pass
 
     if req.mode == "voice" and DEEPGRAM_API_KEY:
         audio_path = f"audio_{req.session_id}.mp3"
-        # Deepgram Stella @ 0.9x Speed for High-Stakes Realism
         res = requests.post(
             "https://api.deepgram.com/v1/speak?model=aura-stella-en",
             headers={"Authorization": f"Token {DEEPGRAM_API_KEY}", "Content-Type": "application/json"},
@@ -85,7 +80,42 @@ async def interact(req: InteractionRequest):
         )
         with open(audio_path, "wb") as f: f.write(res.content)
 
-    return {"reply": clean_reply, "captured": bool(capture)}
+    return {"reply": clean_reply, "captured": False}
+
+@app.post("/generate-proposal")
+async def generate_proposal(req: ProposalRequest):
+    token = await pb_auth()
+    
+    # 1. Calculate the Pain
+    lost_yearly = req.missed_calls * req.avg_value * 52
+    
+    # 2. Store in PocketBase
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{POCKETBASE_URL}/api/collections/leads/records", 
+                json={
+                    "name": req.name,
+                    "email": req.email,
+                    "business_niche": req.company,
+                    "session_id": req.session_id,
+                    "status": "Proposal Generated"
+                },
+                headers={"Authorization": token}
+            )
+    except Exception as e:
+        print(f"DB Error: {e}")
+
+    # 3. Dynamic Stripe Link Generation (Injecting their email for zero friction)
+    base_stripe_link = "https://buy.stripe.com/test_geniuzlab"
+    encoded_email = urllib.parse.quote(req.email)
+    custom_stripe_link = f"{base_stripe_link}?prefilled_email={encoded_email}"
+
+    return {
+        "status": "success",
+        "lost_revenue": lost_yearly,
+        "stripe_url": custom_stripe_link
+    }
 
 @app.get("/audio/{session_id}")
 async def get_audio(session_id: str):
