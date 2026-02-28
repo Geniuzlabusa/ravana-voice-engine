@@ -2,10 +2,10 @@ import os
 import httpx
 import requests
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from groq import Groq
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
 
 # --- Config ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -15,26 +15,32 @@ POCKETBASE_PASSWORD = os.getenv("POCKETBASE_PASSWORD", "changeme")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
 app = FastAPI(title="Geniuzlab Voice AI Router", version="1.0.0")
-groq_client = Groq(api_key=GROQ_API_KEY)
 
+# --- Security: Enable CORS for the pSEO Web Widgets ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 # --- Models ---
 class VoiceRequest(BaseModel):
-    transcript: str                          # Raw voice transcript
-    session_id: str | None = None           # Optional session ID for context
-    user_id: str | None = None              # Optional PocketBase user ID
-    system_prompt: str | None = None        # Override system prompt if needed
-
+    transcript: str
+    session_id: str = "default"             # Enforces a strict session_id
+    user_id: str | None = None
+    system_prompt: str | None = None
 
 class VoiceResponse(BaseModel):
     reply: str
-    session_id: str | None
-    pb_record_id: str | None = None         # ID of saved PocketBase log record
-
+    session_id: str
+    pb_record_id: str | None = None
 
 # --- PocketBase helpers ---
 async def pb_authenticate() -> str:
-    """Authenticate with PocketBase and return auth token."""
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{POCKETBASE_URL}/api/collections/_superusers/auth-with-password",
@@ -45,9 +51,7 @@ async def pb_authenticate() -> str:
             raise HTTPException(status_code=502, detail="PocketBase auth failed")
         return resp.json()["token"]
 
-
 async def pb_save_log(token: str, payload: dict) -> str | None:
-    """Save a voice interaction log to PocketBase. Returns record ID."""
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{POCKETBASE_URL}/api/collections/voice_logs/records",
@@ -57,28 +61,26 @@ async def pb_save_log(token: str, payload: dict) -> str | None:
         )
         if resp.status_code == 200:
             return resp.json().get("id")
-        # Non-fatal — log and continue
         print(f"[WARN] PocketBase save failed: {resp.status_code} {resp.text}")
         return None
-
 
 # --- Routes ---
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "Geniuzlab Voice AI Router"}
 
-
 @app.post("/process-voice", response_model=VoiceResponse)
 async def process_voice(req: VoiceRequest):
     if not req.transcript.strip():
         raise HTTPException(status_code=400, detail="Transcript cannot be empty")
 
+    # The Singularity Closer Prompt
     system_prompt = req.system_prompt or (
-        "You are a helpful, concise AI voice assistant for Geniuzlab LLC. "
-        "Respond in 1-3 short sentences suitable for voice playback."
+        "You are Zara Vane, the elite Executive AI Director at Geniuzlab LLC. "
+        "Speak with absolute certainty and a rugged, professional edge. Keep your response to 2 short sentences."
     )
 
-    # 1. Get Llama 3 response via Groq
+    # 1. Brain: Get Llama 3 response via Groq
     try:
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
@@ -93,9 +95,9 @@ async def process_voice(req: VoiceRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Groq error: {str(e)}")
 
-    # --- 2. DEEPGRAM TTS FORGE ---
+    # 2. Voice: DEEPGRAM TTS FORGE
     if DEEPGRAM_API_KEY:
-        audio_filename = f"audio_{req.session_id or 'default'}.mp3"
+        audio_filename = f"audio_{req.session_id}.mp3"
         deepgram_url = "https://api.deepgram.com/v1/speak?model=aura-orion-en"
         
         headers = {
@@ -104,7 +106,7 @@ async def process_voice(req: VoiceRequest):
         }
         tts_payload = {"text": reply}
         
-        print("[INFO] Forging Boyka audio payload...")
+        print(f"[INFO] Forging Boyka audio payload for session: {req.session_id}...")
         try:
             tts_response = requests.post(deepgram_url, headers=headers, json=tts_payload)
             if tts_response.status_code == 200:
@@ -116,15 +118,14 @@ async def process_voice(req: VoiceRequest):
         except Exception as e:
             print(f"[WARN] Deepgram Request Error: {str(e)}")
     else:
-        print("[WARN] DEEPGRAM_API_KEY not found. Skipping audio forge.")
-    # -----------------------------
+        print("[WARN] DEEPGRAM_API_KEY not found in environment variables. Skipping audio forge.")
 
-    # 3. Log interaction to PocketBase (best-effort)
+    # 3. Memory: Log interaction to PocketBase
     pb_record_id = None
     try:
         token = await pb_authenticate()
         pb_record_id = await pb_save_log(token, {
-            "session_id": req.session_id or "",
+            "session_id": req.session_id,
             "user_id": req.user_id or "",
             "transcript": req.transcript,
             "reply": reply,
