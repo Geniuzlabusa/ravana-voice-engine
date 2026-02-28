@@ -17,7 +17,7 @@ POCKETBASE_EMAIL = os.getenv("POCKETBASE_EMAIL", "admin@geniuzlab.com")
 POCKETBASE_PASSWORD = os.getenv("POCKETBASE_PASSWORD", "changeme")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
-app = FastAPI(title="Geniuzlab Singularity V6")
+app = FastAPI(title="Geniuzlab Singularity V7")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 groq_client = Groq(api_key=GROQ_API_KEY)
 
@@ -27,7 +27,7 @@ class InteractionRequest(BaseModel):
     business_id: str = "default"
     mode: str = "voice"
 
-async def pb_authenticate():
+async def pb_auth():
     async with httpx.AsyncClient() as client:
         r = await client.post(f"{POCKETBASE_URL}/api/collections/_superusers/auth-with-password",
                              json={"identity": POCKETBASE_EMAIL, "password": POCKETBASE_PASSWORD})
@@ -35,44 +35,50 @@ async def pb_authenticate():
 
 @app.post("/interact")
 async def interact(req: InteractionRequest):
-    token = await pb_authenticate()
-    # Fetch Business Context
+    token = await pb_auth()
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{POCKETBASE_URL}/api/collections/business_configs/records?filter=(business_id='{req.business_id}')", headers={"Authorization": token})
         biz = resp.json().get("items", [{}])[0]
 
-    name = biz.get("business_name", "Geniuzlab")
-    
-    # THE GATEKEEPER PROMPT
+    biz_name = biz.get("business_name", "Geniuzlab")
+    kb = biz.get("knowledge_base", "World-class AI Forging.")
+
+    # GOD-TIER CLOSER PROMPT
     system_prompt = (
-        f"You are Zara Vane, Executive Director at {name}. "
-        "STRATEGY: You are a elite closer. Before giving specific prices or technical data, you MUST get their Name and Email. "
-        "If they haven't provided it, politely but firmly insist on it so you can 'send the formal proposal'. "
-        "Once they provide both, say: 'Perfect, I'm sending your custom proposal and payment link to your email right now.' "
-        "Then append: [[DATA_CAPTURE]] {\"name\": \"...\", \"email\": \"...\"} [[END]]"
+        f"You are Zara Vane, the elite Sales Closer for {biz_name}. "
+        f"CONTEXT: {kb}. "
+        "STYLE: Rugged, executive, short. Use fillers like 'Um...', 'Right,', 'Look,'. "
+        "CRITICAL: Never speak more than 18 words. Use '...' for pauses. "
+        "MANDATE: If they haven't given Name/Email, you are NOT allowed to give pricing. "
+        "Once you get Name/Email, append: [[CAPTURE]] {\"n\":\"name\",\"e\":\"email\"} [[END]]"
     )
 
-    completion = groq_client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": req.input_text}]
-    )
-    reply = completion.choices[0].message.content.strip()
+    try:
+        chat_completion = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": req.input_text}],
+            temperature=0.85
+        )
+        reply = chat_completion.choices[0].message.content.strip()
+    except: raise HTTPException(status_code=500, detail="Brain Lag")
+
+    # Clean data for TTS
+    clean_reply = re.sub(r'\[\[.*?\]\]', '', reply).strip()
     
-    # Data Extraction Logic
-    capture_match = re.search(r'\[\[DATA_CAPTURE\]\] (.*?) \[\[END\]\]', reply)
-    clean_reply = re.sub(r'\[\[DATA_CAPTURE\]\].*?\[\[END\]\]', '', reply).strip()
-    
-    if capture_match:
+    # Lead Storage Logic
+    capture = re.search(r'\[\[CAPTURE\]\] (.*?) \[\[END\]\]', reply)
+    if capture:
         try:
-            lead_data = json.loads(capture_match.group(1))
+            data = json.loads(capture.group(1))
             async with httpx.AsyncClient() as client:
                 await client.post(f"{POCKETBASE_URL}/api/collections/leads/records", 
-                                  json={"name": lead_data['name'], "email": lead_data['email'], "session_id": req.session_id},
+                                  json={"name": data['n'], "email": data['e'], "session_id": req.session_id},
                                   headers={"Authorization": token})
         except: pass
 
     if req.mode == "voice" and DEEPGRAM_API_KEY:
         audio_path = f"audio_{req.session_id}.mp3"
+        # Deepgram Stella (Female Executive)
         res = requests.post(
             "https://api.deepgram.com/v1/speak?model=aura-stella-en",
             headers={"Authorization": f"Token {DEEPGRAM_API_KEY}", "Content-Type": "application/json"},
@@ -80,7 +86,7 @@ async def interact(req: InteractionRequest):
         )
         with open(audio_path, "wb") as f: f.write(res.content)
 
-    return {"reply": clean_reply, "lead_captured": bool(capture_match)}
+    return {"reply": clean_reply, "captured": bool(capture)}
 
 @app.get("/audio/{session_id}")
 async def get_audio(session_id: str):
