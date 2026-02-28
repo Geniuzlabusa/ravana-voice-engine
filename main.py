@@ -17,14 +17,15 @@ POCKETBASE_EMAIL = os.getenv("POCKETBASE_EMAIL", "admin@geniuzlab.com")
 POCKETBASE_PASSWORD = os.getenv("POCKETBASE_PASSWORD", "changeme")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
-app = FastAPI(title="Geniuzlab Singularity V4 - Stabilized")
+app = FastAPI(title="Geniuzlab Singularity V5 - The Closer")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-class VoiceRequest(BaseModel):
-    transcript: str
+class InteractionRequest(BaseModel):
+    input_text: str
     session_id: str
     business_id: str = "default"
+    mode: str = "voice" # 'voice' or 'chat'
 
 async def pb_authenticate():
     async with httpx.AsyncClient() as client:
@@ -32,52 +33,46 @@ async def pb_authenticate():
                              json={"identity": POCKETBASE_EMAIL, "password": POCKETBASE_PASSWORD})
         return r.json().get("token")
 
-async def get_business_context(token: str, biz_id: str):
-    async with httpx.AsyncClient() as client:
-        # Fixed query logic to handle missing records safely
-        resp = await client.get(
-            f"{POCKETBASE_URL}/api/collections/business_configs/records?filter=(business_id='{biz_id}')",
-            headers={"Authorization": token}
-        )
-        data = resp.json().get("items", [])
-        return data[0] if data else {} # Return empty dict instead of None to prevent 'get' errors
-
-@app.post("/process-voice")
-async def process_voice(req: VoiceRequest):
+@app.post("/interact")
+async def interact(req: InteractionRequest):
     token = await pb_authenticate()
-    biz = await get_business_context(token, req.business_id)
-    
-    # SAFE DEFAULTS TO PREVENT ATTRIBUTEERRORS
-    name = biz.get("business_name", "Geniuzlab")
-    knowledge = biz.get("knowledge_base", "AI Sales Executive")
-    location = biz.get("target_location", "Matara Command")
+    # 1. Fetch Business Context
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{POCKETBASE_URL}/api/collections/business_configs/records?filter=(business_id='{req.business_id}')", headers={"Authorization": token})
+        biz = resp.json().get("items", [{}])[0]
 
+    name = biz.get("business_name", "Geniuzlab")
+    knowledge = biz.get("knowledge_base", "AI Solutions")
+    
+    # 2. Executive Sales Prompt
     system_prompt = (
-        f"You are Zara Vane, the elite Executive AI Director at Geniuzlab LLC. "
-        f"You represent {name} in {location}. KNOWLEDGE: {knowledge}. "
-        "Sound human using 'Um' or 'Well'. Max 2 short sentences. End with a sharp question to control the frame."
+        f"You are Zara Vane, Executive Director at {name}. KNOWLEDGE: {knowledge}. "
+        "Sound human. Use 'Um' and 'Well'. Max 2 short sentences. "
+        "If they are ready to buy, say exactly: 'I am generating your secure payment link now.' "
+        "Then append: [[PAYMENT_LINK]]"
     )
 
-    try:
-        completion = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": req.transcript}]
-        )
-        reply = completion.choices[0].message.content.strip()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    completion = groq_client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": req.input_text}]
+    )
+    reply = completion.choices[0].message.content.strip()
+    
+    payment_triggered = "[[PAYMENT_LINK]]" in reply
+    clean_reply = reply.replace("[[PAYMENT_LINK]]", "").strip()
 
-    if DEEPGRAM_API_KEY:
+    # 3. Voice Forge (Stella @ 0.9x speed for better realism)
+    if req.mode == "voice" and DEEPGRAM_API_KEY:
         audio_path = f"audio_{req.session_id}.mp3"
+        # Deepgram allows encoding prosody/speed via internal parameters
         res = requests.post(
             "https://api.deepgram.com/v1/speak?model=aura-stella-en",
             headers={"Authorization": f"Token {DEEPGRAM_API_KEY}", "Content-Type": "application/json"},
-            json={"text": reply}
+            json={"text": clean_reply} # Deepgram Aura is already quite natural
         )
-        if res.status_code == 200:
-            with open(audio_path, "wb") as f: f.write(res.content)
+        with open(audio_path, "wb") as f: f.write(res.content)
 
-    return {"reply": reply}
+    return {"reply": clean_reply, "payment_triggered": payment_triggered}
 
 @app.get("/audio/{session_id}")
 async def get_audio(session_id: str):
