@@ -33,7 +33,7 @@ async def pb_authenticate() -> str:
     """Authenticate with PocketBase and return auth token."""
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            f"{POCKETBASE_URL}/api/admins/auth-with-password",
+            f"{POCKETBASE_URL}/api/collections/_superusers/auth-with-password",
             json={"identity": POCKETBASE_EMAIL, "password": POCKETBASE_PASSWORD},
             timeout=10,
         )
