@@ -34,27 +34,28 @@ async def pb_authenticate():
 
 async def get_business_context(token: str, biz_id: str):
     async with httpx.AsyncClient() as client:
+        # Fixed query logic to handle missing records safely
         resp = await client.get(
             f"{POCKETBASE_URL}/api/collections/business_configs/records?filter=(business_id='{biz_id}')",
             headers={"Authorization": token}
         )
         data = resp.json().get("items", [])
-        return data[0] if data else {} # Return empty dict instead of None to prevent crashes
+        return data[0] if data else {} # Return empty dict instead of None to prevent 'get' errors
 
 @app.post("/process-voice")
 async def process_voice(req: VoiceRequest):
     token = await pb_authenticate()
     biz = await get_business_context(token, req.business_id)
     
-    # SAFE DEFAULTS
+    # SAFE DEFAULTS TO PREVENT ATTRIBUTEERRORS
     name = biz.get("business_name", "Geniuzlab")
     knowledge = biz.get("knowledge_base", "AI Sales Executive")
     location = biz.get("target_location", "Matara Command")
 
     system_prompt = (
-        f"You are Zara Vane. You represent {name} in {location}. "
-        f"KNOWLEDGE: {knowledge}. "
-        "Sound human using 'Um' or 'Well'. Max 2 short sentences. End with a question."
+        f"You are Zara Vane, the elite Executive AI Director at Geniuzlab LLC. "
+        f"You represent {name} in {location}. KNOWLEDGE: {knowledge}. "
+        "Sound human using 'Um' or 'Well'. Max 2 short sentences. End with a sharp question to control the frame."
     )
 
     try:
@@ -73,7 +74,8 @@ async def process_voice(req: VoiceRequest):
             headers={"Authorization": f"Token {DEEPGRAM_API_KEY}", "Content-Type": "application/json"},
             json={"text": reply}
         )
-        with open(audio_path, "wb") as f: f.write(res.content)
+        if res.status_code == 200:
+            with open(audio_path, "wb") as f: f.write(res.content)
 
     return {"reply": reply}
 
