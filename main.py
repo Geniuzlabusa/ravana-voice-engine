@@ -46,9 +46,10 @@ async def generate_enterprise_proposal(req: EnterpriseProposalRequest):
                 'price_data': {
                     'currency': 'gbp',
                     'product_data': {
-                        'name': f"Geniuzlab {req.product_name} Deployment",
-                        'description': f"Custom AI Architecture for {req.company} ({req.niche} Sector).",
-                    },
+                            'name': f"Geniuzlab {req.product_name} Deployment",
+                            'description': f"Enterprise-Grade AI Architecture for {req.company}. Includes 24/7 autonomous voice/chat lead capture, sub-800ms latency negotiation engine, and {req.current_crm} CRM synchronization for the {req.niche} sector.",
+                            'images': ["https://images.unsplash.com/photo-1633265486064-086b219458ce?q=80&w=800&auto=format&fit=crop"], # Premium Tech Abstract
+                        },
                     'unit_amount': base_price * 100, 
                 },
                 'quantity': 1,
