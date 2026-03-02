@@ -8,7 +8,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy BOTH vital files to the server
 COPY main.py .
+COPY agent.py .
 
 EXPOSE 8000
 
