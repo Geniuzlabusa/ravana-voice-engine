@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from groq import Groq
+from livekit import api
 
 # ==========================================
 # ENTERPRISE CONFIGURATION & SECRETS
@@ -21,6 +22,8 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "sk_test_placeholder")
 POCKETBASE_URL = os.getenv("POCKETBASE_URL", "http://18.207.204.66:8090")
 POCKETBASE_EMAIL = os.getenv("POCKETBASE_EMAIL", "admin@geniuzlab.com")
 POCKETBASE_PASSWORD = os.getenv("POCKETBASE_PASSWORD", "changeme")
+LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY")
+LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 
 # Initialize Stripe & APIs
 stripe.api_key = STRIPE_SECRET_KEY
@@ -199,3 +202,28 @@ async def get_audio(session_id: str):
     if os.path.exists(file_path):
         return FileResponse(file_path)
     raise HTTPException(status_code=404, detail="Audio file not found")
+
+
+class VoiceRequest(BaseModel):
+    niche: str
+    city: str
+
+@app.post("/generate-voice-token")
+async def generate_voice_token(req: VoiceRequest):
+    if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+        raise HTTPException(status_code=500, detail="LiveKit credentials missing")
+
+    # Create a unique room name for this client
+    room_name = f"demo-{req.niche.lower()}-{req.city.lower()}"
+    participant_identity = f"user-{os.urandom(4).hex()}"
+
+    # Generate the secure token
+    token = api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET) \
+        .with_identity(participant_identity) \
+        .with_name("Web Visitor") \
+        .with_grants(api.VideoGrants(
+            room_join=True,
+            room=room_name,
+        )).to_jwt()
+
+    return {"token": token, "room": room_name}
