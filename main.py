@@ -13,9 +13,7 @@ from pydantic import BaseModel
 from groq import Groq
 from livekit import api
 
-# ==========================================
 # ENTERPRISE CONFIGURATION & SECRETS
-# ==========================================
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "sk_test_placeholder")
@@ -25,22 +23,20 @@ POCKETBASE_PASSWORD = os.getenv("POCKETBASE_PASSWORD", "changeme")
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 
-# Initialize Stripe & APIs
 stripe.api_key = STRIPE_SECRET_KEY
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# Initialize FastAPI Server
 app = FastAPI(title="Geniuzlab Enterprise API V1.0")
+
+# THE CORS FIX - ALLOWS CLOUDFLARE TO COMMUNICATE
 app.add_middleware(
     CORSMiddleware, 
     allow_origins=["*"], 
+    allow_credentials=True,
     allow_methods=["*"], 
     allow_headers=["*"]
 )
 
-# ==========================================
-# DATA MODELS
-# ==========================================
 class InteractionRequest(BaseModel):
     input_text: str
     session_id: str
@@ -59,9 +55,6 @@ class EnterpriseProposalRequest(BaseModel):
     product_name: str    
     niche: str
 
-# ==========================================
-# HELPER: POCKETBASE AUTHENTICATION
-# ==========================================
 async def pb_auth():
     try:
         async with httpx.AsyncClient() as client:
@@ -73,9 +66,6 @@ async def pb_auth():
     except:
         return None
 
-# ==========================================
-# ENDPOINT 1: AI VOICE & CHAT ENGINE
-# ==========================================
 @app.post("/interact")
 async def interact(req: InteractionRequest):
     token = await pb_auth()
@@ -114,7 +104,6 @@ async def interact(req: InteractionRequest):
 
     clean_reply = re.sub(r'\[\[.*?\]\]', '', reply).strip()
 
-    # Deepgram Voice Generation
     if req.mode == "voice" and DEEPGRAM_API_KEY:
         audio_path = f"audio_{req.session_id}.mp3"
         try:
@@ -130,21 +119,14 @@ async def interact(req: InteractionRequest):
 
     return {"reply": clean_reply, "captured": False}
 
-# ==========================================
-# ENDPOINT 2: ENTERPRISE STRIPE CALCULATOR
-# ==========================================
 @app.post("/generate-enterprise-proposal")
 async def generate_enterprise_proposal(req: EnterpriseProposalRequest):
-    # 1. CALCULATE FINANCIAL THREAT 
     lost_yearly = req.missed_calls * req.avg_value * 52
-
-    # 2. DYNAMIC PRICING ALGORITHM
     base_price = 497
     if req.employees == "5-20": base_price += 250
     elif req.employees == "50+": base_price += 1000  
     if req.current_crm != "None": base_price += 250   
 
-    # 3. POCKETBASE CRM LOGGING (Silent execution)
     token = await pb_auth()
     if token:
         try:
@@ -162,7 +144,6 @@ async def generate_enterprise_proposal(req: EnterpriseProposalRequest):
         except Exception as e:
             print(f"CRM Log Error: {e}")
 
-    # 4. STRIPE SECURE CHECKOUT GENERATION
     try:
         checkout_session = stripe.checkout.Session.create(
             payment_method_types=['card'],
@@ -173,7 +154,7 @@ async def generate_enterprise_proposal(req: EnterpriseProposalRequest):
                     'product_data': {
                         'name': f"Geniuzlab {req.product_name} Deployment",
                         'description': f"Enterprise-Grade AI Architecture for {req.company}. Includes 24/7 autonomous lead capture, sub-800ms latency, and {req.current_crm} CRM sync for the {req.niche} sector.",
-                        'images': ["https://raw.githubusercontent.com/github/explore/main/topics/ai/ai.png"], # Static, highly reliable premium tech image
+                        'images': ["https://raw.githubusercontent.com/github/explore/main/topics/ai/ai.png"],
                     },
                     'unit_amount': base_price * 100, 
                 },
@@ -193,16 +174,12 @@ async def generate_enterprise_proposal(req: EnterpriseProposalRequest):
         "stripe_checkout_url": checkout_session.url
     }
 
-# ==========================================
-# ENDPOINT 3: AUDIO SERVING
-# ==========================================
 @app.get("/audio/{session_id}")
 async def get_audio(session_id: str):
     file_path = f"audio_{session_id}.mp3"
     if os.path.exists(file_path):
         return FileResponse(file_path)
     raise HTTPException(status_code=404, detail="Audio file not found")
-
 
 class VoiceRequest(BaseModel):
     niche: str
@@ -213,11 +190,9 @@ async def generate_voice_token(req: VoiceRequest):
     if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
         raise HTTPException(status_code=500, detail="LiveKit credentials missing")
 
-    # Create a unique room name for this client
-    room_name = f"demo-{req.niche.lower()}-{req.city.lower()}"
+    room_name = f"demo-{req.niche.lower().replace(' ', '-')}-{req.city.lower().replace(' ', '-')}"
     participant_identity = f"user-{os.urandom(4).hex()}"
 
-    # Generate the secure token
     token = api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET) \
         .with_identity(participant_identity) \
         .with_name("Web Visitor") \
