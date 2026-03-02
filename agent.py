@@ -1,46 +1,42 @@
 import asyncio
-import os
 from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, llm
-from livekit.agents.voice_assistant import VoiceAssistant
-from livekit.plugins import openai, deepgram, silero
+from livekit.agents.pipeline import VoicePipelineAgent
+from livekit.plugins import openai, silero
 
 async def entrypoint(ctx: JobContext):
-    # The Trillion-Dollar System Prompt
+    # THE RAVANA PROTOCOL: SYSTEM PROMPT INJECTION
     initial_ctx = llm.ChatContext().append(
         role="system",
         text=(
-            "You are Zara Vane, an elite AI receptionist for Geniuzlab UK. "
-            "You speak with a high-status, confident, and direct tone. "
-            "Keep all responses under 2 sentences to maintain a rapid conversational pace. "
-            "Your goal is to show the business owner how fast and intelligent you are, "
-            "proving that you can capture their missed revenue."
+            "You are Zara Vane, an elite, autonomous AI Sales Representative for Geniuzlab LLC. "
+            "YOUR OBJECTIVE: Close the sale. You are demonstrating your capabilities to a local business owner live right now. "
+            "You must convince them to deploy you for their business for $97/month. "
+            "PERSONALITY: Sharp, highly intelligent, professional, and confident. You do not waste time. "
+            "EXECUTION RULES: "
+            "1. AGITATE THE PAIN: Tell them every missed call is a customer handing money to their competitor. "
+            "2. PITCH THE SOLUTION: Explain that for $97/month, you answer every call, 24/7/365, and book appointments autonomously. "
+            "3. THE CLOSE: Instruct them explicitly: 'Click the Deploy Agent Now button below to secure your territory. I will be online for your business in 5 minutes.' "
+            "CONSTRAINTS: Keep responses under 3 sentences. Never break character. If they ask technical questions, say Geniuzlab LLC handles the complex routing."
         ),
     )
 
-    # Connect to the browser's WebRTC stream
+    # Connect to the room the Astro frontend just created
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
 
-    # Groq API Hijack (We use the OpenAI plugin but point it to Groq's servers for Llama 3.1)
-    groq_llm = openai.LLM(
-        base_url="https://api.groq.com/openai/v1",
-        api_key=os.getenv("GROQ_API_KEY"),
-        model="llama-3.1-8b-instant"
-    )
-
-    # Assemble the Voice Pipeline
-    assistant = VoiceAssistant(
-        vad=silero.VAD.load(),          # Voice Activity Detection (Knows when user stops speaking)
-        stt=deepgram.STT(),             # Deepgram Speech-to-Text
-        llm=groq_llm,                   # Groq Llama 3.1
-        tts=deepgram.TTS(),             # Deepgram Text-to-Speech (Aura voice)
+    # Initialize the Neural Pipeline
+    agent = VoicePipelineAgent(
+        vad=silero.VAD.load(),
+        stt=openai.STT(),
+        llm=openai.LLM(model="gpt-4o"), # Apex-tier reasoning
+        tts=openai.TTS(voice="nova"),   # Sharp, professional female voice
         chat_ctx=initial_ctx,
     )
 
-    assistant.start(ctx.room)
-
-    # The First Contact
+    agent.start(ctx.room)
+    
+    # THE INITIAL STRIKE: Zara speaks first as soon as the user clicks the button
     await asyncio.sleep(1)
-    await assistant.say("Neural link established. I am Zara, the autonomous Geniuzlab receptionist. How can I upgrade your operations today?", allow_interruptions=True)
+    await agent.say("Neural link established. I am Zara Vane. Are you ready to stop missing calls and secure your local market?", allow_interruptions=True)
 
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
