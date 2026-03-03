@@ -14,4 +14,4 @@ COPY agent.py .
 
 EXPOSE 8000
 
-CMD sh -c "${START_COMMAND:-uvicorn main:app --host 0.0.0.0 --port 8000}"
+CMD sh -c "${START_COMMAND:-uvicorn main:CMD python agent.py dev & uvicorn main:app --host 0.0.0.0 --port 8000}"
