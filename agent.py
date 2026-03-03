@@ -31,4 +31,4 @@ async def entrypoint(ctx: JobContext):
     await agent.say("Geniuzlab Voice OS online. I am Zara. What local business are you calling from today?", allow_interruptions=True)
 
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint)) 
