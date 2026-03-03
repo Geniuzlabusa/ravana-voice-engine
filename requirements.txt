@@ -6,8 +6,9 @@ pydantic==2.7.1
 requests
 python-multipart
 stripe
-livekit-api
-livekit-agents
-livekit-plugins-openai
-livekit-plugins-deepgram
-livekit-plugins-silero
+livekit-api==0.7.0
+livekit-agents==0.11.2
+livekit-plugins-openai==0.10.5
+livekit-plugins-deepgram==0.6.1
+livekit-plugins-silero==0.7.3
+livekit-plugins-elevenlabs==0.2.3
